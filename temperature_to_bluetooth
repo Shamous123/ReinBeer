@@ -1,0 +1,112 @@
+#include <OneWire.h>
+#include <SoftwareSerial.h>
+// OneWire DS18S20, DS18B20, DS1822 Temperature Example
+//
+// http://www.pjrc.com/teensy/td_libs_OneWire.html
+//
+// The DallasTemperature library can do all this work for you!
+// http://milesburton.com/Dallas_Temperature_Control_Library
+
+OneWire  ds(10);  // on pin 10 (a 4.7K resistor is necessary)
+SoftwareSerial mySerial(2, 3);
+
+//BLUETOOTH GLOBAL VARIABLES
+int ledPin = 13;  // use the built in LED on pin 13 of the Uno
+
+//GLOBAL VARIABLES FOR THE TEMPERATURE MANAGEMENT
+float temps[100];
+int pos = 0;
+unsigned long currentMillis = 0;
+long previousMillis = 0;            //the last time that the temperature was read;
+long interval = 6000;               //check the temperature every 10 seconds
+
+
+void setup(void) {
+  mySerial.begin(9600);
+  while (!mySerial) {               //wait until the serial port is ready
+  }
+  getTemperature();   //get the temperature the when it starts up
+}
+
+//this function retrieves the temperature from the DS18B20 temperature sensor.
+void getTemperature() {
+  byte i;
+  byte present = 0;
+  byte type_s;
+  byte data[12];
+  byte addr[8];
+  float temp;
+
+  while ( !ds.search(addr)) { //wait until the sensor is ready to recieve data.
+    ds.reset_search();
+    delay(200);
+  }
+
+  ds.reset();
+  ds.select(addr);
+  ds.write(0x44, 1);        // start conversion, with parasite power on at the end
+
+  delay(800);     // maybe 750ms is enough, maybe not
+  // we might do a ds.depower() here, but the reset will take care of it.
+
+  present = ds.reset();
+  ds.select(addr);
+  ds.write(0xBE);         // Read Scratchpad
+
+  for ( i = 0; i < 9; i++) {           // we need 9 bytes
+    data[i] = ds.read();
+  }
+
+  // Convert the data to actual temperature
+  // because the result is a 16 bit signed integer, it should
+  // be stored to an "int16_t" type, which is always 16 bits
+  // even when compiled on a 32 bit processor.
+  int16_t raw = (data[1] << 8) | data[0];
+  if (type_s) {
+    raw = raw << 3; // 9 bit resolution default
+    if (data[7] == 0x10) {
+      // "count remain" gives full 12 bit resolution
+      raw = (raw & 0xFFF0) + 12 - data[6];
+    }
+  } else {
+    byte cfg = (data[4] & 0x60);
+    // at lower res, the low bits are undefined, so let's zero them
+    if (cfg == 0x00) raw = raw & ~7;  // 9 bit resolution, 93.75 ms
+    else if (cfg == 0x20) raw = raw & ~3; // 10 bit res, 187.5 ms
+    else if (cfg == 0x40) raw = raw & ~1; // 11 bit res, 375 ms
+    //// default is 12 bit resolution, 750 ms conversion time
+  }
+  temp = (float)raw / 16.0;
+  addTemp(temp);
+}
+//returns the most recent temperature reading.
+float  getRecentTemp() {
+  float lastTemp;
+  lastTemp = temps[pos];
+  return (lastTemp);
+}
+
+//Adds a temperature to the array. If the array is full, it will overwrite the earliest temperature reading.
+void addTemp(double newTemp) {
+  if (pos == 99) {
+    pos = 0;
+  }
+  else {
+    pos += 1;
+  }
+  temps[pos] = newTemp;
+}
+
+void loop(void) {
+
+  if (mySerial.available() > 0) {
+    mySerial.read();
+    if (getRecentTemp()) {
+      mySerial.println(getRecentTemp());
+    }
+  }
+  currentMillis = millis();
+  if (currentMillis - previousMillis > interval) {
+    getTemperature();
+  }
+}
